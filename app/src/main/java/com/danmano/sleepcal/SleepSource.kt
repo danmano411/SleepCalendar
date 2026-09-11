@@ -2,7 +2,6 @@ package com.danmano.sleepcal
 
 import android.content.Context
 import androidx.health.connect.client.HealthConnectClient
-import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.metadata.DataOrigin
@@ -22,16 +21,7 @@ val HC_PERMISSIONS = setOf(
 class SleepSource(context: Context) {
     private val client = HealthConnectClient.getOrCreate(context)
 
-    /** Background read is only required where this phone's Health Connect supports it. */
-    suspend fun missingPermissions(): Set<String> {
-        val needed = if (backgroundReadSupported()) HC_PERMISSIONS
-        else HC_PERMISSIONS - HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND
-        return needed - client.permissionController.getGrantedPermissions()
-    }
-
-    fun backgroundReadSupported(): Boolean =
-        client.features.getFeatureStatus(HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_IN_BACKGROUND) ==
-            HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
+    suspend fun missingPermissions(): Set<String> = HC_PERMISSIONS - client.permissionController.getGrantedPermissions()
 
     suspend fun read(from: Instant, to: Instant): List<Session> {
         val out = mutableListOf<Session>()

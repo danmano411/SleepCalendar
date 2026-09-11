@@ -46,7 +46,6 @@ private val ANDROID_PERMISSIONS = arrayOf(
 private data class SetupStatus(
     val healthAvailable: Boolean,
     val healthGranted: Boolean,
-    val backgroundSupported: Boolean,
     val calendarGranted: Boolean,
     val calendars: List<CalendarInfo>,
     val calendarId: Long,
@@ -94,9 +93,6 @@ class MainActivity : ComponentActivity() {
                 !s.healthAvailable -> Text("⚠️ Health Connect isn't available on this phone.")
                 s.healthGranted -> Text("✅ Health Connect: sleep + background access")
                 else -> Button(onClick = { askHealth.launch(HC_PERMISSIONS) }) { Text("Grant Health Connect access") }
-            }
-            if (s.healthAvailable && !s.backgroundSupported) {
-                Text("⚠️ This phone's Health Connect can't read in the background, so syncs only work while SleepCal is open.")
             }
 
             if (s.calendarGranted) {
@@ -161,7 +157,6 @@ class MainActivity : ComponentActivity() {
         return SetupStatus(
             healthAvailable = healthAvailable,
             healthGranted = source?.missingPermissions()?.isEmpty() == true,
-            backgroundSupported = source?.backgroundReadSupported() == true,
             calendarGranted = calendarGranted,
             calendars = calendars,
             calendarId = state.calendarId,

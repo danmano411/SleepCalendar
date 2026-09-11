@@ -193,7 +193,8 @@ permission dialog does not open.
 
 1. Samsung Health on a non-Samsung phone writes sleep (with stages) to Health Connect, and the data
    origin package is `com.sec.android.app.shealth`.
-2. `FEATURE_READ_HEALTH_DATA_IN_BACKGROUND` is available on this phone's Health Connect module.
+2. `FEATURE_READ_HEALTH_DATA_IN_BACKGROUND` is available on this phone's Health Connect module (shown by
+   the background-read grant succeeding; without it every run aborts, as in the failure table).
 3. Placeholder `EVENT_COLOR_KEY` syncs to Google and shows in Notion Calendar (else title alone marks it).
 4. Whether naps are written to Health Connect at all.
 
