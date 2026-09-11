@@ -8,21 +8,29 @@ How it works and why: [design spec](docs/superpowers/specs/2026-09-10-sleepcal-d
 
 ## One-time setup
 
-1. **Health Connect:** Settings → Health Connect → Data and access → Sleep — check that Samsung Health
-   entries are there. If not: Samsung Health → Settings → Health Connect → allow Sleep, and turn on
-   *Consent to processing of health and wellness data*.
-2. **Google Calendar:** at calendar.google.com, Other calendars → + → Create new calendar → "Sleep".
+1. **Samsung Health Data SDK:** sign in with your Samsung account at
+   [developer.samsung.com/health/data](https://developer.samsung.com/health/data/overview.html#SDK-download),
+   download *Samsung Health Data SDK v1.1.0*, accept the license, and copy
+   `libs/samsung-health-data-api-1.1.0.aar` from the zip into `app/libs/`. It is gitignored on purpose:
+   the license doesn't allow redistributing it.
+2. **Samsung Health Developer Mode:** Samsung Health → ⋮ → Settings → About Samsung Health → tap the
+   version number ~10 times → *Developer mode (Samsung Health Data SDK)* → agree → turn the toggle on.
+   Leave the package name and access code empty (they're only for apps that write data).
+3. **Google Calendar:** at calendar.google.com, Other calendars → + → Create new calendar → "Sleep".
    Pick a color and set its default notifications to none.
-3. **Battery:** set Unrestricted (and allow auto-start) for SleepCal, Samsung Health, Galaxy Wearable
+4. **Battery:** set Unrestricted (and allow auto-start) for SleepCal, Samsung Health, Galaxy Wearable
    and the Galaxy Watch plugin.
-4. **Install:** enable Developer options → USB debugging on the phone, plug it in, then:
+5. **Install:** enable Developer options → USB debugging on the phone, plug it in, then:
    ```bash
    export JAVA_HOME="/c/Program Files/Java/jdk-25.0.4.1" ANDROID_HOME="$LOCALAPPDATA/Android/Sdk"
    ./gradlew installDebug
    ```
-5. **Open SleepCal:** grant Health Connect, calendar and notification access, confirm the "Sleep"
-   calendar is selected, allow unrestricted battery, tap **Sync now**.
-6. **Notion Calendar:** make sure the Sleep calendar is visible.
+6. **Open SleepCal:** tap *Grant Samsung Health access* (allow Sleep), grant calendar and notification
+   access, confirm the "Sleep" calendar is selected, allow unrestricted battery, tap **Sync now**.
+7. **Notion Calendar:** make sure the Sleep calendar is visible.
+
+If something's wrong, SleepCal says so on its screen and in "Last run" (e.g. Developer Mode switched
+off after a Samsung Health update).
 
 ## Build and test
 

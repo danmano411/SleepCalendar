@@ -1,6 +1,13 @@
 # SleepCal — Design Spec
 
-**Date:** 2026-09-10 · **Status:** Approved (build stage) · **Owner:** Dan Mano
+**Date:** 2026-09-10 · **Revised:** 2026-09-11 · **Status:** Working on device · **Owner:** Dan Mano
+
+> **Revision 2026-09-11 — data source switched to the Samsung Health Data SDK.** On the phone, Samsung
+> Health held the sleep (with stages) but never wrote anything to Health Connect, even with write
+> permission, "Access allowed" and the health-data consent on; Health Connect's access log showed no
+> Samsung Health writes at all. SleepCal now reads Samsung Health directly through the SDK (Developer
+> Mode, read-only), which also brings back the sleep score. Only `SleepSource.kt`, the setup screen,
+> the manifest and the build changed; the planner rules are untouched apart from the score line.
 
 ## Goal
 
@@ -13,52 +20,54 @@ when no sleep was logged.
 
 | Topic | Decision |
 |---|---|
-| Data source | **Health Connect** (Samsung Health writes sleep sessions + stages into it). No sleep score. Samsung Health Data SDK kept as a later swap (only `SleepSource.kt` changes). |
+| Data source | **Samsung Health Data SDK 1.1.0** (read-only, Samsung Health Developer Mode): sleep records with sessions, stages and sleep score. Originally Health Connect — see the revision note. |
 | Calendar write path | **Android `CalendarContract`** on the phone → Google's own sync pushes to Google Calendar → Notion Calendar. No Google Cloud project, no OAuth. |
 | Target calendar | Dedicated **"Sleep"** secondary calendar, created once by hand at calendar.google.com. |
 | Missing night | **Placeholder** "❔ Sleep (not logged)" at the median bed/wake time of the last 7 logged nights. |
 | Cutoff | Placeholder written once it is past **3:00 PM** on the wake day with no data. |
 | Ownership | **Your edits win.** The app updates an event only while it is exactly as the app last wrote it. Edited → locked forever. Deleted → never recreated. |
 | Split sleep / naps | Sessions < 60 min apart merge into one block. The block overlapping midnight–6 AM is the night; everything else is a nap with its own event. |
-| Event look | One block bed→wake, title `😴 Sleep · 7h 23m`, stages and wake gaps in the description. |
+| Event look | One block bed→wake, title `😴 Sleep · 7h 23m`, score, stages and wake gaps in the description. |
 | Build | Small Kotlin Android app, sideloaded onto a RedMagic 10 Pro (NX789J), Android 15. |
 
 ## Architecture
 
 ```
-Galaxy Watch ─BT─▶ Samsung Health ─▶ Health Connect
-                                          │ background read, every 30 min
-                                          ▼
-                                   SleepCal app (WorkManager)
+Galaxy Watch ─BT─▶ Samsung Health
+                          │ Samsung Health Data SDK, background read every 30 min
+                          ▼
+                   SleepCal app (WorkManager)
                                           │ CalendarContract insert/update
                                           ▼
                     phone's Google calendar ─sync─▶ Google Calendar ─▶ Notion Calendar
 ```
 
-One Android app, package `com.danmano.sleepcal`, minSdk 34 (Health Connect is part of Android 14+),
-compileSdk/targetSdk 36. Seven source files in `app/src/main/java/com/danmano/sleepcal/`:
+One Android app, package `com.danmano.sleepcal`, minSdk 34, compileSdk/targetSdk 36. Seven source files in `app/src/main/java/com/danmano/sleepcal/`:
 
 | File | Responsibility | Depends on |
 |---|---|---|
 | `Model.kt` | Shared data types (below) + the description marker format. The contract between files. | nothing |
 | `Planner.kt` | **Pure Kotlin** (java.time only). All rules: merging, night/nap classification, placeholder + median, event text, edit-ownership decisions. Emits actions. | `Model.kt` |
-| `SleepSource.kt` | Reads Health Connect `SleepSessionRecord`s (paged) and maps them to `Session`. The only file that knows Health Connect exists. | Health Connect client |
+| `SleepSource.kt` | Reads `DataTypes.SLEEP` records through the Samsung Health Data SDK and maps each record's sessions (with stages and the record's score) to `Session`; requests the read permission; turns SDK errors into user-facing messages (`explain`). The only file that knows where sleep comes from. | Samsung Health Data SDK |
 | `CalendarStore.kt` | Lists writable Google calendars, reads SleepCal-tagged events in a window, inserts/updates events. | `CalendarContract` |
 | `State.kt` | SharedPreferences + `org.json`: per-key memory (one set per calendar), chosen calendar id, last-run status. | Android |
 | `SyncWorker.kt` | `CoroutineWorker`: read → plan → apply → save; error notification. Scheduling helpers. | all of the above |
-| `MainActivity.kt` | One Compose setup screen + Health Connect privacy-rationale entry point. | all of the above |
+| `MainActivity.kt` | One Compose setup screen. | all of the above |
 
-Libraries added to the Android Studio template: `androidx.health.connect:connect-client:1.1.0`,
-`androidx.work:work-runtime-ktx:2.11.2`. Template extras (navigation, view model, repository,
-serialization, instrumented tests) are removed.
+Libraries added to the Android Studio template: `androidx.work:work-runtime-ktx:2.11.2`, the Samsung
+Health Data SDK as a local AAR (`app/libs/samsung-health-data-api-1.1.0.aar` — licensed, not
+redistributable, so it is gitignored and downloaded by hand), plus the two runtime libraries the SDK
+needs but does not declare: `gson` and `kotlin-parcelize-runtime` (without the latter every read fails
+with `NoClassDefFoundError: kotlinx.parcelize.Parceler`). Template extras (navigation, view model,
+repository, serialization, instrumented tests) are removed.
 
 ## Core types (contract between files)
 
 ```kotlin
 // Model.kt
-enum class Stage { AWAKE, LIGHT, DEEP, REM, SLEEPING, UNKNOWN }
+enum class Stage { AWAKE, LIGHT, DEEP, REM, UNKNOWN }
 data class StageSpan(val start: Instant, val end: Instant, val stage: Stage)
-data class Session(val start: Instant, val end: Instant, val stages: List<StageSpan>)
+data class Session(val start: Instant, val end: Instant, val stages: List<StageSpan>, val score: Int? = null)
 
 data class EventSpec(
     val title: String, val description: String,
@@ -103,9 +112,10 @@ Constants at the top of `Planner.kt`: `MERGE_GAP = 60 min`, `NIGHT_WINDOW = 00:0
    - Night: title `😴 Sleep · {asleep}`; nap: `💤 Nap · {asleep}`.
    - `inBed = end − start`; `awake = Σ AWAKE stage spans + Σ merge gaps`; `asleep = inBed − awake`
      (with no stage data this is the summed session time).
-   - Description lines: `Asleep 7h 23m · in bed 7h 36m`; stage line with present stages in order
+   - Description lines: `Asleep 7h 23m · in bed 7h 36m`; `Score 82` (the score of the block's longest
+     session's record; omitted when Samsung has none); stage line with present stages in order
      Deep · REM · Light · Awake (omitted if no stages); one `Woke 3:10 AM–3:35 AM` line per merge gap;
-     `Source: Samsung Health via Health Connect`; last line marker `#sleepcal {key}`.
+     `Source: Samsung Health`; last line marker `#sleepcal {key}`.
    - Durations format as `7h 23m`, or `42m` under an hour. Times use `h:mm a`, Locale.US.
 5. **Placeholder**: for each day D in [today − 2, today] where `now ≥ D 15:00` and D has no night →
    desired `night:D` = placeholder. Times: median of the last `MEDIAN_NIGHTS` real nights (bedtime as
@@ -154,56 +164,69 @@ Constants at the top of `Planner.kt`: `MERGE_GAP = 60 min`, `NIGHT_WINDOW = 00:0
 | Watch not worn / dead | Placeholder after 3 PM (rule 5). |
 | Data lands late | Picked up by the next 30-min run; replaces an untouched placeholder. |
 | Samsung revises a session | Untouched event updated; touched event left alone. |
-| Health Connect unavailable, or `READ_SLEEP` / background-read not granted | Run aborts without writing; notification "SleepCal needs Health Connect access" (max once/day); status shown in app. |
+| Samsung Health Developer Mode off (SDK error 2003) | Run aborts without writing; "Turn on Developer Mode for Data Read in Samsung Health…" shown in the app and as a notification (max once/day). |
+| Sleep read permission not granted (2000), or Samsung Health missing / outdated / terms not agreed (3000–3003) | Run aborts; message in app + notification; *Grant Samsung Health access* opens Samsung Health's permission, install, update or terms screen. |
 | Calendar permission missing, or chosen calendar gone | Run aborts; notification "SleepCal can't find your Sleep calendar" (max once/day). |
-| Any other exception | Recorded as last-run error, notification (max once/day), next period retries. |
+| Any other failure (including `Error`s such as a missing SDK class) | Recorded as last-run error, notification (max once/day), next period retries. The worker catches `Throwable`: this phone ships with logcat silenced (`log.tag=S`), so "Last run" is the only place a failure shows. |
 | OS kills background work (RedMagic) | Setup requires battery "Unrestricted" for SleepCal, Samsung Health, Galaxy Wearable, Watch plugin. WorkManager catches up when allowed; app shows last successful run. |
 | App data cleared / reinstall | Existing tagged events are adopted as LOCKED — never overwritten, never duplicated. App backup is off (`allowBackup="false"`), so a reinstall never restores another phone's calendar id. |
-| Duplicate Health Connect writers | Read filtered to data origin `com.sec.android.app.shealth` (constant in `SleepSource.kt`). |
+| Reinstalling SleepCal | The phone resets its unrestricted-battery setting; the setup screen shows the button again. |
 
 ## One-time setup & credentials
 
-No API keys, developer accounts, Google Cloud project, or OAuth.
+No API keys, Google Cloud project, OAuth, or Samsung partnership. Credentials needed: a **Samsung
+account** (already signed in to Samsung Health) — used once on developer.samsung.com to download the SDK
+and accept its license — and Samsung Health **Developer Mode** on the phone.
 
-1. **Health Connect check:** Settings → Health Connect → Data and access → Sleep → entries from
-   Samsung Health exist. If not: Samsung Health → Settings → Health Connect → allow Sleep; enable
-   *Consent to processing of health and wellness data*.
-2. **Google:** calendar.google.com → Other calendars → + → Create new calendar → "Sleep"; pick a
+1. **SDK:** sign in at developer.samsung.com/health/data → download *Samsung Health Data SDK v1.1.0* →
+   copy `libs/samsung-health-data-api-1.1.0.aar` into `app/libs/` (gitignored — the license forbids
+   redistribution).
+2. **Samsung Health:** ⋮ → Settings → About Samsung Health → tap the version ~10× → *Developer mode
+   (Samsung Health Data SDK)* → agree → turn on the developer-mode toggle (called *Developer Mode for Data
+   Read* in Samsung's docs; Samsung Health 7.x shows a single toggle). Leave package name / access code
+   empty — those are only for writing data.
+3. **Google:** calendar.google.com → Other calendars → + → Create new calendar → "Sleep"; pick a
    color; set its default notifications to none.
-3. **Battery:** Unrestricted + allow auto-start for SleepCal, Samsung Health, Galaxy Wearable, Galaxy
+4. **Battery:** Unrestricted + allow auto-start for SleepCal, Samsung Health, Galaxy Wearable, Galaxy
    Watch plugin.
-4. **Install:** enable Developer options → USB debugging; build & install (`gradlew installDebug`).
-5. **In SleepCal:** grant Health Connect (sleep + background), calendar and notification permissions;
+5. **Install:** enable Developer options → USB debugging; build & install (`gradlew installDebug`).
+6. **In SleepCal:** *Grant Samsung Health access* (allow Sleep), calendar and notification permissions;
    confirm the "Sleep" calendar; tap *Sync now*.
-6. **Notion Calendar:** make sure the Sleep calendar is visible.
+7. **Notion Calendar:** make sure the Sleep calendar is visible.
 
-Permissions (manifest): `health.READ_SLEEP`, `health.READ_HEALTH_DATA_IN_BACKGROUND`,
-`READ_CALENDAR`, `WRITE_CALENDAR`, `POST_NOTIFICATIONS`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.
-Manifest also declares the Health Connect rationale intent (`androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE`)
-and the Android 14+ `VIEW_PERMISSION_USAGE` / `HEALTH_PERMISSIONS` activity-alias — without them the
-permission dialog does not open.
+Permissions (manifest): `READ_CALENDAR`, `WRITE_CALENDAR`, `POST_NOTIFICATIONS`,
+`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`. The SDK's own manifest merges in `INTERNET` and a `<queries>`
+entry for Samsung Health. Sleep access itself is granted inside Samsung Health, not as an Android
+permission.
 
 ## Testing
 
 - **Unit (JVM, `PlannerTest.kt`):** merge threshold; night vs nap (normal night, 03:00–05:30 short night,
   afternoon block); placeholder only after 15:00; median across midnight; fallback with < 3 nights;
   every row of the ownership table; placeholder → real update; asleep/awake math with stages and gaps;
-  description text; horizon freezing.
+  description text incl. the score line; horizon freezing.
 - **Build gate:** `gradlew testDebugUnitTest assembleDebug` green.
-- **On device (later stage, phone connected via adb):** Phase-0 checks below, then *Sync now* → event
-  appears in Google Calendar web and Notion Calendar; drag it → next sync leaves it; delete it → not
-  recreated; a watch-off night → placeholder at 3 PM.
+- **On device:** *Sync now* → event appears in Google Calendar web and Notion Calendar; drag it → next
+  sync leaves it; delete it → not recreated; a watch-off night → placeholder at 3 PM.
 
-## Open items to verify on the device
+## Verified on the device (2026-09-11, RedMagic 10 Pro, Android 15, Samsung Health 7.00.6)
 
-1. Samsung Health on a non-Samsung phone writes sleep (with stages) to Health Connect, and the data
-   origin package is `com.sec.android.app.shealth`.
-2. `FEATURE_READ_HEALTH_DATA_IN_BACKGROUND` is available on this phone's Health Connect module (shown by
-   the background-read grant succeeding; without it every run aborts, as in the failure table).
-3. Placeholder `EVENT_COLOR_KEY` syncs to Google and shows in Notion Calendar (else title alone marks it).
-4. Whether naps are written to Health Connect at all.
+- Install, setup screen, calendar auto-select, battery exemption, 30-minute worker firing on its own.
+- Placeholders written for nights with no data; the graphite colour key `8` is accepted by the provider.
+- Samsung Health Data SDK reads on a non-Samsung phone in Developer Mode (Samsung logs "Bypassing
+  checking signature … verified"). First real sync: `1 created, 2 updated` — both untouched placeholders
+  replaced by real nights, colour cleared, score and stages in the notes; all three events reached
+  Google Calendar.
+- Background reads work: the 4:06 PM scheduled run read Samsung Health through the SDK while another
+  app (Instagram) was in the foreground — `Worker result SUCCESS`, "OK, 0 created, 0 updated".
+- Health Connect route abandoned: Samsung Health never wrote to Health Connect on this phone.
+
+## Open items
+
+1. Whether Developer Mode survives Samsung Health updates (undocumented; the app says so if it doesn't).
+2. Whether naps come through as separate sleep records.
 
 ## Out of scope
 
-Sleep score (needs Samsung Health Data SDK — later swap), stage-level events, cloud components,
-multi-user, Play Store distribution, editing sleep back into Samsung Health.
+Stage-level events, cloud components, multi-user, Play Store distribution (would need Samsung
+partnership), editing sleep back into Samsung Health.

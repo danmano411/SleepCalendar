@@ -13,3 +13,7 @@
 .externalNativeBuild
 .cxx
 local.properties
+.gstack/
+
+# Samsung Health Data SDK: licensed, not redistributable. Download it yourself (see README).
+/app/libs/
