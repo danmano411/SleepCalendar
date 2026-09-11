@@ -98,17 +98,18 @@ private fun median(xs: List<Long>): Long = xs.sorted().let { (it[(it.size - 1) /
 /**
  * A "not logged" night for [day] at the median bed/wake time of the most recent logged nights.
  * Bedtime is measured from noon the day before, wake from midnight, so times either side of
- * midnight average correctly.
+ * midnight average correctly. Both are wall-clock minutes, so DST change days land on the usual times.
  */
 fun placeholderSpec(day: LocalDate, nights: Map<LocalDate, Block>, zone: ZoneId): EventSpec {
     val recent = nights.entries.sortedBy { it.key }.takeLast(MEDIAN_NIGHTS)
-    fun noonBefore(d: LocalDate) = d.minusDays(1).atTime(LocalTime.NOON).atZone(zone)
+    fun noonBefore(d: LocalDate) = d.minusDays(1).atTime(LocalTime.NOON)
+    fun local(i: Instant) = i.atZone(zone).toLocalDateTime()
     val (start, end, note) = if (recent.size >= MIN_NIGHTS_FOR_MEDIAN) {
-        val bed = median(recent.map { (d, b) -> Duration.between(noonBefore(d).toInstant(), b.start).toMinutes() })
-        val wake = median(recent.map { (d, b) -> Duration.between(d.atStartOfDay(zone).toInstant(), b.end).toMinutes() })
+        val bed = median(recent.map { (d, b) -> Duration.between(noonBefore(d), local(b.start)).toMinutes() })
+        val wake = median(recent.map { (d, b) -> Duration.between(d.atStartOfDay(), local(b.end)).toMinutes() })
         Triple(
-            noonBefore(day).plusMinutes(bed),
-            day.atStartOfDay(zone).plusMinutes(wake),
+            noonBefore(day).plusMinutes(bed).atZone(zone),
+            day.atStartOfDay().plusMinutes(wake).atZone(zone),
             "Typical times from your last ${recent.size} logged nights.",
         )
     } else {
@@ -183,7 +184,8 @@ fun decide(key: String, mem: Memory?, live: LiveEvent?, want: EventSpec?): Actio
     mem.status != Status.ACTIVE -> null
     live == null -> Action.Tombstone(key)
     mem.written == null || !sameAs(live, mem.written) -> Action.Lock(key)
-    want != null && want != mem.written -> Action.Update(key, live.id, want)
+    // Recorded sleep is never replaced by a placeholder (e.g. a time-zone change re-classifies the night).
+    want != null && want != mem.written && !(want.placeholder && !mem.written.placeholder) -> Action.Update(key, live.id, want)
     else -> null
 }
 

@@ -170,6 +170,14 @@ class PlannerTest {
         assertTrue(create.spec.description.contains("Default times — not enough history yet."))
     }
 
+    @Test fun `placeholder on a DST change day keeps the typical clock times`() {
+        val sessions = listOf("2026-10-29", "2026-10-30", "2026-10-31").map { night(it, "23:30", "07:30") }
+        val create = plan(sessions, emptyMap(), emptyMap(), now("2026-11-01", "16:00"))
+            .single { it.key == "night:2026-11-01" } as Action.Create
+        assertEquals(at("2026-10-31", "23:30"), create.spec.start)
+        assertEquals(at("2026-11-01", "07:30"), create.spec.end)
+    }
+
     @Test fun `an untouched placeholder is replaced when real data arrives`() {
         val sessions = listOf("2026-09-08", "2026-09-09").map { night(it, "23:30", "07:30") }
         val first = plan(sessions, emptyMap(), emptyMap(), now("2026-09-10", "15:00"))
@@ -216,6 +224,9 @@ class PlannerTest {
 
     @Test fun `an untouched event is updated when the data changes`() =
         assertEquals(Action.Update(key, 1, newer), decide(key, Memory(Status.ACTIVE, spec), liveOf(1, spec), newer))
+
+    @Test fun `an untouched real event is never downgraded to a placeholder`() =
+        assertNull(decide(key, Memory(Status.ACTIVE, spec), liveOf(1, spec), spec.copy(title = "❔ Sleep (not logged)", placeholder = true)))
 
     @Test fun `an untouched event with unchanged data is left alone`() =
         assertNull(decide(key, Memory(Status.ACTIVE, spec), liveOf(1, spec), spec))

@@ -109,7 +109,8 @@ Constants at the top of `Planner.kt`: `MERGE_GAP = 60 min`, `NIGHT_WINDOW = 00:0
    - Durations format as `7h 23m`, or `42m` under an hour. Times use `h:mm a`, Locale.US.
 5. **Placeholder**: for each day D in [today − 2, today] where `now ≥ D 15:00` and D has no night →
    desired `night:D` = placeholder. Times: median of the last `MEDIAN_NIGHTS` real nights (bedtime as
-   minutes after noon of D−1, wake as minutes after midnight of D — handles the midnight wrap). Fewer
+   minutes after noon of D−1, wake as minutes after midnight of D — handles the midnight wrap; wall-clock
+   minutes, so DST change days keep the usual times). Fewer
    than `MIN_NIGHTS_FOR_MEDIAN` nights → fallback 23:30 → 07:30. Title `❔ Sleep (not logged)`,
    description `No watch data for this night — drag this block to your real times.` +
    `Typical times from your last N logged nights.` (or `Default times — not enough history yet.`) +
@@ -124,10 +125,11 @@ Constants at the top of `Planner.kt`: `MERGE_GAP = 60 min`, `NIGHT_WINDOW = 00:0
    | ACTIVE | absent | `Tombstone` (you deleted or moved it) |
    | ACTIVE | differs from `written` (normalized) | `Lock` (you edited it) |
    | ACTIVE | equals `written`, desired differs | `Update` |
-   | ACTIVE | equals `written`, desired same or none | nothing |
+   | ACTIVE | equals `written`, desired same or none, or a placeholder where real data was written | nothing |
 
    *Normalized* compare: title and description with `\r\n → \n` and trimmed; start/end at minute
-   precision. Keys outside the horizon are frozen: no actions.
+   precision. Keys outside the horizon are frozen: no actions. Recorded sleep is never downgraded to a
+   placeholder (e.g. after a time-zone change re-classifies a logged night as a nap).
 
 ## Calendar details
 
