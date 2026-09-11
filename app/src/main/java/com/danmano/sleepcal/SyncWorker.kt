@@ -78,7 +78,7 @@ private suspend fun syncOnce(context: Context, state: State): String {
                 memory[a.key] = Memory(Status.ACTIVE, a.spec)
             }
             is Action.Update -> {
-                store.update(a.eventId, a.spec)
+                store.update(a.eventId, a.spec, recolor = memory[a.key]?.written?.placeholder != a.spec.placeholder)
                 memory[a.key] = Memory(Status.ACTIVE, a.spec)
             }
             is Action.Lock -> memory[a.key] = Memory(Status.LOCKED, memory[a.key]?.written)

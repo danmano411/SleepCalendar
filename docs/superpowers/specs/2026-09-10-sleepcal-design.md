@@ -141,7 +141,8 @@ Constants at the top of `Planner.kt`: `MERGE_GAP = 60 min`, `NIGHT_WINDOW = 00:0
   set `SYNC_EVENTS = 1` and `VISIBLE = 1` (writable by normal apps).
 - **Event fields:** `DTSTART/DTEND` (ms), `EVENT_TIMEZONE` = device zone, `AVAILABILITY_FREE`,
   `HAS_ALARM = 0`. Placeholders: best-effort `EVENT_COLOR_KEY` = the Google "graphite" color key from
-  `CalendarContract.Colors` (ignored on failure); updating to real data clears the color.
+  `CalendarContract.Colors` (ignored on failure); replacing a placeholder with real data clears the color.
+  Other updates leave the color alone, so a color you picked stays.
 - The app never deletes events.
 
 ## Failure handling

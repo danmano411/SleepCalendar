@@ -79,9 +79,13 @@ class CalendarStore(context: Context) {
         checkNotNull(resolver.insert(Events.CONTENT_URI, values)) { "Calendar insert failed" }
     }
 
-    fun update(eventId: Long, spec: EventSpec) = withColorFallback(spec) { values ->
-        val rows = resolver.update(ContentUris.withAppendedId(Events.CONTENT_URI, eventId), values, null, null)
-        check(rows == 1) { "Calendar update touched $rows events" }
+    /** [recolor]: switching between placeholder and real, so the colour changes; otherwise a colour you picked stays. */
+    fun update(eventId: Long, spec: EventSpec, recolor: Boolean) {
+        val write = { values: ContentValues ->
+            val rows = resolver.update(ContentUris.withAppendedId(Events.CONTENT_URI, eventId), values, null, null)
+            check(rows == 1) { "Calendar update touched $rows events" }
+        }
+        if (recolor) withColorFallback(spec, write) else write(values(spec, withColor = false))
     }
 
     /** Placeholders get the graphite colour if the account has it; otherwise write without colour. */
