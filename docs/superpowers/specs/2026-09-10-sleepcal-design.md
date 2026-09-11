@@ -217,13 +217,14 @@ permission.
   checking signature … verified"). First real sync: `1 created, 2 updated` — both untouched placeholders
   replaced by real nights, colour cleared, score and stages in the notes; all three events reached
   Google Calendar.
+- Background reads work: the 4:06 PM scheduled run read Samsung Health through the SDK while another
+  app (Instagram) was in the foreground — `Worker result SUCCESS`, "OK, 0 created, 0 updated".
 - Health Connect route abandoned: Samsung Health never wrote to Health Connect on this phone.
 
 ## Open items
 
-1. Background reads through the SDK while SleepCal is not in the foreground (the 30-minute run).
-2. Whether Developer Mode survives Samsung Health updates (undocumented; the app says so if it doesn't).
-3. Whether naps come through as separate sleep records.
+1. Whether Developer Mode survives Samsung Health updates (undocumented; the app says so if it doesn't).
+2. Whether naps come through as separate sleep records.
 
 ## Out of scope
 
