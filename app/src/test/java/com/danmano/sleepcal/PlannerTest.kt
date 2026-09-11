@@ -15,8 +15,8 @@ class PlannerTest {
 
     private fun at(date: String, time: String): Instant = LocalDateTime.parse("${date}T$time").atZone(zone).toInstant()
     private fun now(date: String, time: String): ZonedDateTime = LocalDateTime.parse("${date}T$time").atZone(zone)
-    private fun session(start: Instant, end: Instant, vararg stages: StageSpan) = Session("s-$start", start, end, stages.toList())
-    private fun liveOf(id: Long, key: String, spec: EventSpec) = LiveEvent(id, key, spec.title, spec.description, spec.start, spec.end)
+    private fun session(start: Instant, end: Instant, vararg stages: StageSpan) = Session(start, end, stages.toList())
+    private fun liveOf(id: Long, spec: EventSpec) = LiveEvent(id, spec.title, spec.description, spec.start, spec.end)
 
     /** A night ending on [wake]; a bedtime after noon means the evening before. */
     private fun night(wake: String, bed: String, up: String): Session {
@@ -175,7 +175,7 @@ class PlannerTest {
         val first = plan(sessions, emptyMap(), emptyMap(), now("2026-09-10", "15:00"))
             .single { it.key == key } as Action.Create
         val memory = mapOf(key to Memory(Status.ACTIVE, first.spec))
-        val live = mapOf(key to liveOf(7, key, first.spec))
+        val live = mapOf(key to liveOf(7, first.spec))
         val update = plan(sessions + night("2026-09-10", "00:10", "08:05"), memory, live, now("2026-09-10", "18:00"))
             .single { it.key == key } as Action.Update
         assertEquals(7L, update.eventId)
@@ -185,13 +185,15 @@ class PlannerTest {
 
     @Test fun `keys older than the horizon are frozen`() {
         val memory = mapOf("night:2026-09-01" to Memory(Status.ACTIVE, spec))
-        assertTrue(plan(emptyList(), memory, emptyMap(), now("2026-09-10", "09:00")).none { it.key == "night:2026-09-01" })
+        val oldNap = session(at("2026-09-07", "13:00"), at("2026-09-07", "14:00"))
+        val keys = plan(listOf(oldNap), memory, emptyMap(), now("2026-09-10", "09:00")).map { it.key }
+        assertTrue(keys.none { it == "night:2026-09-01" || it == "nap:2026-09-07T13:00" })
     }
 
     // --- ownership table
 
     @Test fun `no memory and a tagged event already there is adopted as locked`() =
-        assertEquals(Action.Lock(key), decide(key, null, liveOf(1, key, spec), spec))
+        assertEquals(Action.Lock(key), decide(key, null, liveOf(1, spec), spec))
 
     @Test fun `no memory and no event creates it`() =
         assertEquals(Action.Create(key, spec), decide(key, null, null, spec))
@@ -200,7 +202,7 @@ class PlannerTest {
         assertNull(decide(key, null, null, null))
 
     @Test fun `locked and tombstoned keys are never touched`() {
-        assertNull(decide(key, Memory(Status.LOCKED, spec), liveOf(1, key, spec), newer))
+        assertNull(decide(key, Memory(Status.LOCKED, spec), liveOf(1, spec), newer))
         assertNull(decide(key, Memory(Status.TOMBSTONE, spec), null, newer))
     }
 
@@ -208,18 +210,18 @@ class PlannerTest {
         assertEquals(Action.Tombstone(key), decide(key, Memory(Status.ACTIVE, spec), null, newer))
 
     @Test fun `an event you moved is locked`() {
-        val moved = liveOf(1, key, spec).copy(start = at("2026-09-10", "00:00"))
+        val moved = liveOf(1, spec).copy(start = at("2026-09-10", "00:00"))
         assertEquals(Action.Lock(key), decide(key, Memory(Status.ACTIVE, spec), moved, newer))
     }
 
     @Test fun `an untouched event is updated when the data changes`() =
-        assertEquals(Action.Update(key, 1, newer), decide(key, Memory(Status.ACTIVE, spec), liveOf(1, key, spec), newer))
+        assertEquals(Action.Update(key, 1, newer), decide(key, Memory(Status.ACTIVE, spec), liveOf(1, spec), newer))
 
     @Test fun `an untouched event with unchanged data is left alone`() =
-        assertNull(decide(key, Memory(Status.ACTIVE, spec), liveOf(1, key, spec), spec))
+        assertNull(decide(key, Memory(Status.ACTIVE, spec), liveOf(1, spec), spec))
 
     @Test fun `line-ending and whitespace differences from sync are not edits`() {
-        val synced = liveOf(1, key, spec).copy(description = spec.description.replace("\n", "\r\n") + "  ")
+        val synced = liveOf(1, spec).copy(description = spec.description.replace("\n", "\r\n") + "  ")
         assertNull(decide(key, Memory(Status.ACTIVE, spec), synced, spec))
     }
 }

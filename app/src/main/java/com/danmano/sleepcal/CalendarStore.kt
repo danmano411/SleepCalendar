@@ -7,7 +7,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.CalendarContract.Calendars
 import android.provider.CalendarContract.Events
-import androidx.core.content.ContextCompat
 import java.time.Instant
 import java.time.ZoneId
 
@@ -15,7 +14,7 @@ data class CalendarInfo(val id: Long, val name: String, val account: String)
 
 fun hasCalendarPermission(context: Context): Boolean =
     listOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
-        .all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
+        .all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
 
 /** Google's "Graphite" event colour key. ponytail: best guess at the key; unverified until the device test, title marks placeholders regardless. */
 private const val GRAPHITE = "8"
@@ -64,7 +63,7 @@ class CalendarStore(context: Context) {
                 val description = c.getString(2) ?: ""
                 val key = markerKey(description) ?: continue
                 out[key] = LiveEvent(
-                    c.getLong(0), key, c.getString(1) ?: "", description,
+                    c.getLong(0), c.getString(1) ?: "", description,
                     Instant.ofEpochMilli(c.getLong(3)), Instant.ofEpochMilli(c.getLong(4)),
                 )
             }

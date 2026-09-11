@@ -46,7 +46,7 @@ class SleepSource(context: Context) {
                 ),
             )
             response.records.mapTo(out) { r ->
-                Session(r.metadata.id, r.startTime, r.endTime, r.stages.map { StageSpan(it.startTime, it.endTime, stageOf(it.stage)) })
+                Session(r.startTime, r.endTime, r.stages.map { StageSpan(it.startTime, it.endTime, stageOf(it.stage)) })
             }
             page = response.pageToken
         } while (page != null)

@@ -1,14 +1,13 @@
 package com.danmano.sleepcal
 
 import android.Manifest
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
@@ -37,9 +36,6 @@ fun syncNow(context: Context) {
         .enqueueUniqueWork(SYNC_NOW, ExistingWorkPolicy.REPLACE, OneTimeWorkRequestBuilder<SyncWorker>().build())
 }
 
-/** A setup problem the user has to fix; shown as-is in the app and notification. */
-class Problem(message: String) : Exception(message)
-
 // The periodic job and "Sync now" can overlap; both would see an empty memory and insert twice.
 private val syncLock = Mutex()
 
@@ -63,13 +59,13 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 /** One pass: read sleep, plan, write the calendar, remember what was written. */
 private suspend fun syncOnce(context: Context, state: State): String {
     val now = ZonedDateTime.now()
-    if (!SleepSource.available(context)) throw Problem("Health Connect isn't available")
+    check(SleepSource.available(context)) { "Health Connect isn't available" }
     val source = SleepSource(context)
-    if (source.missingPermissions().isNotEmpty()) throw Problem("SleepCal needs Health Connect access")
-    if (!hasCalendarPermission(context)) throw Problem("SleepCal needs calendar access")
+    check(source.missingPermissions().isEmpty()) { "SleepCal needs Health Connect access" }
+    check(hasCalendarPermission(context)) { "SleepCal needs calendar access" }
     val store = CalendarStore(context)
     val calendarId = state.calendarId
-    if (calendarId < 0 || !store.exists(calendarId)) throw Problem("SleepCal can't find your Sleep calendar")
+    check(calendarId >= 0 && store.exists(calendarId)) { "SleepCal can't find your Sleep calendar" }
 
     val sessions = source.read(now.minusDays(14).toInstant(), now.toInstant())
     val live = store.tagged(calendarId, now.minusDays(4).toInstant(), now.plusDays(1).toInstant())
@@ -99,15 +95,14 @@ private suspend fun syncOnce(context: Context, state: State): String {
 private fun notifyOncePerDay(context: Context, state: State, text: String) {
     val today = LocalDate.now().toString()
     if (state.lastNotified == today) return
-    val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-        PackageManager.PERMISSION_GRANTED
-    if (!granted) return
+    if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
     val manager = context.getSystemService(NotificationManager::class.java)
     manager.createNotificationChannel(NotificationChannel("sync", "Sync problems", NotificationManager.IMPORTANCE_DEFAULT))
     val open = PendingIntent.getActivity(
         context, 0, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
     )
-    val notification = NotificationCompat.Builder(context, "sync")
+    val notification = Notification.Builder(context, "sync")
+        .setShowWhen(true)
         .setSmallIcon(android.R.drawable.stat_notify_error)
         .setContentTitle("SleepCal")
         .setContentText(text)

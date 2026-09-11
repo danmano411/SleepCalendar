@@ -7,7 +7,7 @@ enum class Stage { AWAKE, LIGHT, DEEP, REM, SLEEPING, UNKNOWN }
 data class StageSpan(val start: Instant, val end: Instant, val stage: Stage)
 
 /** One sleep session as recorded by the watch. */
-data class Session(val id: String, val start: Instant, val end: Instant, val stages: List<StageSpan>)
+data class Session(val start: Instant, val end: Instant, val stages: List<StageSpan>)
 
 /** What SleepCal wants an event to look like. Times are truncated to the minute. */
 data class EventSpec(
@@ -26,7 +26,6 @@ data class Memory(val status: Status, val written: EventSpec?)
 /** An event in the Sleep calendar that carries a SleepCal marker. */
 data class LiveEvent(
     val id: Long,
-    val key: String,
     val title: String,
     val description: String,
     val start: Instant,

@@ -164,7 +164,7 @@ fun plan(
     }
     for (b in naps) {
         val key = "nap:" + b.start.atZone(zone).toLocalDateTime().truncatedTo(MINUTES)
-        if (keyDate(key)!! >= firstDay) desired[key] = realSpec(key, b, zone, isNight = false)
+        desired[key] = realSpec(key, b, zone, isNight = false)
     }
 
     return (desired.keys + memory.keys + live.keys)

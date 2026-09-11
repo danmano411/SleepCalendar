@@ -58,7 +58,7 @@ serialization, instrumented tests) are removed.
 // Model.kt
 enum class Stage { AWAKE, LIGHT, DEEP, REM, SLEEPING, UNKNOWN }
 data class StageSpan(val start: Instant, val end: Instant, val stage: Stage)
-data class Session(val id: String, val start: Instant, val end: Instant, val stages: List<StageSpan>)
+data class Session(val start: Instant, val end: Instant, val stages: List<StageSpan>)
 
 data class EventSpec(
     val title: String, val description: String,
@@ -67,7 +67,7 @@ data class EventSpec(
 )
 enum class Status { ACTIVE, LOCKED, TOMBSTONE }
 data class Memory(val status: Status, val written: EventSpec?)   // written == null only for adopted LOCKED
-data class LiveEvent(val id: Long, val key: String, val title: String, val description: String,
+data class LiveEvent(val id: Long, val title: String, val description: String,
                      val start: Instant, val end: Instant)
 
 sealed interface Action {
