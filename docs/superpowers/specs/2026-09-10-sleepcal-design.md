@@ -36,11 +36,12 @@ Galaxy Watch ─BT─▶ Samsung Health ─▶ Health Connect
 ```
 
 One Android app, package `com.danmano.sleepcal`, minSdk 34 (Health Connect is part of Android 14+),
-compileSdk/targetSdk 36. Six source files in `app/src/main/java/com/danmano/sleepcal/`:
+compileSdk/targetSdk 36. Seven source files in `app/src/main/java/com/danmano/sleepcal/`:
 
 | File | Responsibility | Depends on |
 |---|---|---|
-| `Planner.kt` | **Pure Kotlin** (java.time only). Data types + all rules: merging, night/nap classification, placeholder + median, event text, edit-ownership decisions. Emits actions. | nothing |
+| `Model.kt` | Shared data types (below) + the description marker format. The contract between files. | nothing |
+| `Planner.kt` | **Pure Kotlin** (java.time only). All rules: merging, night/nap classification, placeholder + median, event text, edit-ownership decisions. Emits actions. | `Model.kt` |
 | `SleepSource.kt` | Reads Health Connect `SleepSessionRecord`s (paged) and maps them to `Session`. The only file that knows Health Connect exists. | Health Connect client |
 | `CalendarStore.kt` | Lists writable Google calendars, reads SleepCal-tagged events in a window, inserts/updates events. | `CalendarContract` |
 | `State.kt` | SharedPreferences + `org.json`: per-key memory, chosen calendar id, last-run status. | Android |
@@ -54,7 +55,7 @@ serialization, instrumented tests) are removed.
 ## Core types (contract between files)
 
 ```kotlin
-// Planner.kt
+// Model.kt
 enum class Stage { AWAKE, LIGHT, DEEP, REM, SLEEPING, UNKNOWN }
 data class StageSpan(val start: Instant, val end: Instant, val stage: Stage)
 data class Session(val id: String, val start: Instant, val end: Instant, val stages: List<StageSpan>)
@@ -77,6 +78,9 @@ sealed interface Action {
     data class Tombstone(override val key: String) : Action
 }
 
+fun markerKey(description: String): String?   // parses "#sleepcal <key>"
+
+// Planner.kt
 fun plan(sessions: List<Session>, memory: Map<String, Memory>,
          live: Map<String, LiveEvent>, now: ZonedDateTime): List<Action>
 ```
@@ -94,13 +98,13 @@ Constants at the top of `Planner.kt`: `MERGE_GAP = 60 min`, `NIGHT_WINDOW = 00:0
    local date of block start and the day after; first match wins). The candidate with the longest
    in-bed time is **the night for D**, key `night:YYYY-MM-DD`. Every other block is a **nap**, key
    `nap:YYYY-MM-DDTHH:MM` (local start).
-4. **Desired events** within the horizon (nights with D ≥ today − 2; naps ending within the last
-   3 days):
+4. **Desired events** within the horizon (nights with D ≥ today − 2; naps starting on or after
+   today − 2):
    - Night: title `😴 Sleep · {asleep}`; nap: `💤 Nap · {asleep}`.
-   - `inBed = end − start`; `awake = Σ AWAKE stage spans + Σ merge gaps`; `asleep = inBed − awake`.
-     With no stage data, `asleep = Σ session durations`.
+   - `inBed = end − start`; `awake = Σ AWAKE stage spans + Σ merge gaps`; `asleep = inBed − awake`
+     (with no stage data this is the summed session time).
    - Description lines: `Asleep 7h 23m · in bed 7h 36m`; stage line with present stages in order
-     Deep · REM · Light · Awake (omitted if no stages); one `Woke h:mm–h:mm AM` line per merge gap;
+     Deep · REM · Light · Awake (omitted if no stages); one `Woke 3:10 AM–3:35 AM` line per merge gap;
      `Source: Samsung Health via Health Connect`; last line marker `#sleepcal {key}`.
    - Durations format as `7h 23m`, or `42m` under an hour. Times use `h:mm a`, Locale.US.
 5. **Placeholder**: for each day D in [today − 2, today] where `now ≥ D 15:00` and D has no night →
