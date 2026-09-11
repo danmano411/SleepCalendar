@@ -47,8 +47,10 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             state.lastRun = "$stamp — OK, ${syncLock.withLock { syncOnce(applicationContext, state) }}"
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Exception) {
-            val message = e.message ?: e.javaClass.simpleName
+        } catch (e: Throwable) {
+            // Throwable, not Exception: a missing SDK class is an Error, and on phones that silence logcat
+            // (RedMagic ships log.tag=S) "Last run" is the only place a failure shows up.
+            val message = explain(e) ?: e.message ?: e.javaClass.simpleName
             state.lastRun = "$stamp — $message"
             notifyOncePerDay(applicationContext, state, message)
         }
@@ -59,9 +61,8 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 /** One pass: read sleep, plan, write the calendar, remember what was written. */
 private suspend fun syncOnce(context: Context, state: State): String {
     val now = ZonedDateTime.now()
-    check(SleepSource.available(context)) { "Health Connect isn't available" }
     val source = SleepSource(context)
-    check(source.missingPermissions().isEmpty()) { "SleepCal needs Health Connect access" }
+    check(source.hasPermission()) { "SleepCal needs Samsung Health access" }
     check(hasCalendarPermission(context)) { "SleepCal needs calendar access" }
     val store = CalendarStore(context)
     val calendarId = state.calendarId

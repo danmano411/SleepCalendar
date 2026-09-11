@@ -96,7 +96,7 @@ class PlannerTest {
             Asleep 7h 25m · in bed 8h 0m
             Deep 1h 0m · REM 45m · Light 2h 0m · Awake 15m
             Woke 3:00 AM–3:20 AM
-            Source: Samsung Health via Health Connect
+            Source: Samsung Health
             #sleepcal night:2026-09-10
             """.trimIndent(),
             spec.description,
@@ -109,9 +109,16 @@ class PlannerTest {
         val spec = realSpec("night:2026-09-10", merge(listOf(night("2026-09-10", "23:30", "07:30"))).single(), zone, isNight = true)
         assertEquals("😴 Sleep · 8h 0m", spec.title)
         assertEquals(
-            "Asleep 8h 0m · in bed 8h 0m\nSource: Samsung Health via Health Connect\n#sleepcal night:2026-09-10",
+            "Asleep 8h 0m · in bed 8h 0m\nSource: Samsung Health\n#sleepcal night:2026-09-10",
             spec.description,
         )
+    }
+
+    @Test fun `the sleep score of the longest session goes under the asleep line`() {
+        val main = night("2026-09-10", "23:30", "06:00").copy(score = 82)
+        val tail = session(at("2026-09-10", "06:20"), at("2026-09-10", "07:10")).copy(score = 40)
+        val spec = realSpec("night:2026-09-10", merge(listOf(main, tail)).single(), zone, isNight = true)
+        assertEquals("Score 82", spec.description.lines()[1])
     }
 
     @Test fun `marker key is parsed from plain and html descriptions`() {

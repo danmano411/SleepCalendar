@@ -82,11 +82,14 @@ fun realSpec(key: String, b: Block, zone: ZoneId, isNight: Boolean): EventSpec {
         .map { (stage, label) -> label to stageTotal(b, stage) }
         .filter { !it.second.isZero }
         .joinToString(" · ") { (label, d) -> "$label ${fmt(d)}" }
+    // A block can merge records; the longest session's night decides the score.
+    val score = b.sessions.maxBy { Duration.between(it.start, it.end) }.score
     val lines = buildList {
         add("Asleep ${fmt(asleep(b))} · in bed ${fmt(Duration.between(b.start, b.end))}")
+        if (score != null) add("Score $score")
         if (stages.isNotEmpty()) add(stages)
         b.gaps.forEach { (s, e) -> add("Woke ${clock.format(s.atZone(zone))}–${clock.format(e.atZone(zone))}") }
-        add("Source: Samsung Health via Health Connect")
+        add("Source: Samsung Health")
         add("$MARKER $key")
     }
     val title = (if (isNight) "😴 Sleep · " else "💤 Nap · ") + fmt(asleep(b))

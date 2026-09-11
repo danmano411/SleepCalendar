@@ -2,12 +2,12 @@ package com.danmano.sleepcal
 
 import java.time.Instant
 
-enum class Stage { AWAKE, LIGHT, DEEP, REM, SLEEPING, UNKNOWN }
+enum class Stage { AWAKE, LIGHT, DEEP, REM, UNKNOWN }
 
 data class StageSpan(val start: Instant, val end: Instant, val stage: Stage)
 
-/** One sleep session as recorded by the watch. */
-data class Session(val start: Instant, val end: Instant, val stages: List<StageSpan>)
+/** One sleep session as recorded by the watch. [score] is Samsung's sleep score for the night it belongs to. */
+data class Session(val start: Instant, val end: Instant, val stages: List<StageSpan>, val score: Int? = null)
 
 /** What SleepCal wants an event to look like. Times are truncated to the minute. */
 data class EventSpec(

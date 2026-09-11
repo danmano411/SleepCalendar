@@ -33,9 +33,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.unit.dp
-import androidx.health.connect.client.PermissionController
 import androidx.work.WorkManager
+import kotlinx.coroutines.launch
 
 private val ANDROID_PERMISSIONS = arrayOf(
     Manifest.permission.READ_CALENDAR,
@@ -44,8 +45,8 @@ private val ANDROID_PERMISSIONS = arrayOf(
 )
 
 private data class SetupStatus(
-    val healthAvailable: Boolean,
-    val healthGranted: Boolean,
+    val samsungGranted: Boolean,
+    val samsungProblem: String?,
     val calendarGranted: Boolean,
     val calendars: List<CalendarInfo>,
     val calendarId: Long,
@@ -53,12 +54,10 @@ private data class SetupStatus(
     val lastRun: String,
 )
 
-/** The setup screen. Health Connect also opens it to show SleepCal's privacy rationale. */
+/** The setup screen. */
 class MainActivity : ComponentActivity() {
     private var refresh by mutableIntStateOf(0)
 
-    private val askHealth =
-        registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { refresh++ }
     private val askAndroid =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refresh++ }
 
@@ -77,10 +76,12 @@ class MainActivity : ComponentActivity() {
     private fun Setup() {
         val state = remember { State(this) }
         val store = remember { CalendarStore(this) }
+        val source = remember { SleepSource(this) }
+        val scope = rememberCoroutineScope()
         var status by remember { mutableStateOf<SetupStatus?>(null) }
         val syncRun by remember { WorkManager.getInstance(this).getWorkInfosForUniqueWorkFlow(SYNC_NOW) }
             .collectAsState(emptyList())
-        LaunchedEffect(refresh, syncRun.firstOrNull()?.state) { status = load(state, store) }
+        LaunchedEffect(refresh, syncRun.firstOrNull()?.state) { status = load(state, store, source) }
         val s = status ?: return
 
         Column(
@@ -89,11 +90,18 @@ class MainActivity : ComponentActivity() {
         ) {
             Text("SleepCal", style = MaterialTheme.typography.headlineMedium)
 
-            when {
-                !s.healthAvailable -> Text("⚠️ Health Connect isn't available on this phone.")
-                s.healthGranted -> Text("✅ Health Connect: sleep + background access")
-                else -> Button(onClick = { askHealth.launch(HC_PERMISSIONS) }) { Text("Grant Health Connect access") }
+            if (s.samsungGranted) {
+                Text("✅ Samsung Health: sleep access")
+            } else {
+                Button(onClick = {
+                    scope.launch {
+                        // Any failure shows up below as samsungProblem when the status reloads.
+                        runCatching { source.requestPermission(this@MainActivity) }
+                        refresh++
+                    }
+                }) { Text("Grant Samsung Health access") }
             }
+            s.samsungProblem?.let { Text("⚠️ $it") }
 
             if (s.calendarGranted) {
                 Text("✅ Calendar access")
@@ -131,21 +139,24 @@ class MainActivity : ComponentActivity() {
 
             Button(
                 onClick = { syncNow(this@MainActivity) },
-                enabled = s.healthGranted && s.calendarGranted && s.calendarId >= 0,
+                enabled = s.samsungGranted && s.calendarGranted && s.calendarId >= 0,
             ) { Text("Sync now") }
             Text("Last run: ${s.lastRun}")
 
             Text(
-                "Privacy: SleepCal reads your sleep sessions from Health Connect and writes them to the Google " +
+                "Privacy: SleepCal reads your sleep from Samsung Health and writes it to the Google " +
                     "calendar you choose. It runs only on this phone and sends nothing anywhere else.",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
     }
 
-    private suspend fun load(state: State, store: CalendarStore): SetupStatus {
-        val healthAvailable = SleepSource.available(this)
-        val source = if (healthAvailable) SleepSource(this) else null
+    private suspend fun load(state: State, store: CalendarStore, source: SleepSource): SetupStatus {
+        val (samsungGranted, samsungProblem) = try {
+            source.hasPermission() to null
+        } catch (e: Exception) {
+            false to (explain(e) ?: e.message)
+        }
         val calendarGranted = hasCalendarPermission(this)
         val calendars = if (calendarGranted) store.writableCalendars() else emptyList()
         if (state.calendarId < 0) {
@@ -155,8 +166,8 @@ class MainActivity : ComponentActivity() {
             }
         }
         return SetupStatus(
-            healthAvailable = healthAvailable,
-            healthGranted = source?.missingPermissions()?.isEmpty() == true,
+            samsungGranted = samsungGranted,
+            samsungProblem = samsungProblem,
             calendarGranted = calendarGranted,
             calendars = calendars,
             calendarId = state.calendarId,

@@ -1,61 +1,71 @@
 package com.danmano.sleepcal
 
+import android.app.Activity
 import android.content.Context
-import androidx.health.connect.client.HealthConnectClient
-import androidx.health.connect.client.permission.HealthPermission
-import androidx.health.connect.client.records.SleepSessionRecord
-import androidx.health.connect.client.records.metadata.DataOrigin
-import androidx.health.connect.client.request.ReadRecordsRequest
-import androidx.health.connect.client.time.TimeRangeFilter
+import com.samsung.android.sdk.health.data.HealthDataService
+import com.samsung.android.sdk.health.data.error.ErrorCode
+import com.samsung.android.sdk.health.data.error.HealthDataException
+import com.samsung.android.sdk.health.data.error.ResolvablePlatformException
+import com.samsung.android.sdk.health.data.permission.AccessType
+import com.samsung.android.sdk.health.data.permission.Permission
+import com.samsung.android.sdk.health.data.request.DataType.SleepType
+import com.samsung.android.sdk.health.data.request.DataTypes
+import com.samsung.android.sdk.health.data.request.InstantTimeFilter
+import com.samsung.android.sdk.health.data.request.Ordering
 import java.time.Instant
 
-/** Samsung Health's package — the only Health Connect sleep writer SleepCal trusts. */
-const val SAMSUNG_HEALTH = "com.sec.android.app.shealth"
+private val SLEEP_READ = setOf(Permission.of(DataTypes.SLEEP, AccessType.READ))
 
-val HC_PERMISSIONS = setOf(
-    HealthPermission.getReadPermission(SleepSessionRecord::class),
-    HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND,
-)
-
-/** The only file that knows Health Connect exists; swap this out to read Samsung's SDK instead. */
+/** The only file that knows where sleep comes from: Samsung Health, via Samsung's Health Data SDK. */
 class SleepSource(context: Context) {
-    private val client = HealthConnectClient.getOrCreate(context)
+    private val store = HealthDataService.getStore(context.applicationContext)
 
-    suspend fun missingPermissions(): Set<String> = HC_PERMISSIONS - client.permissionController.getGrantedPermissions()
+    suspend fun hasPermission(): Boolean = store.getGrantedPermissions(SLEEP_READ).containsAll(SLEEP_READ)
 
-    suspend fun read(from: Instant, to: Instant): List<Session> {
-        val out = mutableListOf<Session>()
-        var page: String? = null
-        do {
-            val response = client.readRecords(
-                ReadRecordsRequest(
-                    SleepSessionRecord::class,
-                    TimeRangeFilter.between(from, to),
-                    dataOriginFilter = setOf(DataOrigin(SAMSUNG_HEALTH)),
-                    pageToken = page,
-                ),
-            )
-            response.records.mapTo(out) { r ->
-                Session(r.startTime, r.endTime, r.stages.map { StageSpan(it.startTime, it.endTime, stageOf(it.stage)) })
-            }
-            page = response.pageToken
-        } while (page != null)
-        return out
+    /** Opens Samsung Health's permission screen, or its install/update/terms screen when that comes first. */
+    suspend fun requestPermission(activity: Activity) {
+        try {
+            store.requestPermissions(SLEEP_READ, activity)
+        } catch (e: ResolvablePlatformException) {
+            if (e.hasResolution) e.resolve(activity) else throw e
+        }
     }
 
-    companion object {
-        fun available(context: Context): Boolean =
-            HealthConnectClient.getSdkStatus(context) == HealthConnectClient.SDK_AVAILABLE
+    suspend fun read(from: Instant, to: Instant): List<Session> {
+        val request = DataTypes.SLEEP.readDataRequestBuilder
+            .setInstantTimeFilter(InstantTimeFilter.of(from, to))
+            .setOrdering(Ordering.ASC)
+            .build()
+        return store.readData(request).dataList.flatMap { point ->
+            // One record per night; its score covers every session in it.
+            val score = point.getValue(SleepType.SLEEP_SCORE)
+            val sessions = point.getValue(SleepType.SESSIONS)
+            if (sessions.isNullOrEmpty()) {
+                listOfNotNull(point.endTime?.let { Session(point.startTime, it, emptyList(), score) })
+            } else {
+                sessions.map { s ->
+                    val stages = s.stages.orEmpty().map { StageSpan(it.startTime, it.endTime, stageOf(it.stage)) }
+                    Session(s.startTime, s.endTime, stages, score)
+                }
+            }
+        }
     }
 }
 
-private fun stageOf(type: Int): Stage = when (type) {
-    SleepSessionRecord.STAGE_TYPE_AWAKE,
-    SleepSessionRecord.STAGE_TYPE_AWAKE_IN_BED,
-    SleepSessionRecord.STAGE_TYPE_OUT_OF_BED -> Stage.AWAKE
-    SleepSessionRecord.STAGE_TYPE_LIGHT -> Stage.LIGHT
-    SleepSessionRecord.STAGE_TYPE_DEEP -> Stage.DEEP
-    SleepSessionRecord.STAGE_TYPE_REM -> Stage.REM
-    SleepSessionRecord.STAGE_TYPE_SLEEPING -> Stage.SLEEPING
+/** What to tell the user about a Samsung Health SDK failure, or null if [e] isn't one. */
+fun explain(e: Throwable): String? = when {
+    e !is HealthDataException -> null
+    e.errorCode == ErrorCode.ERR_ACCESS_CONTROL ->
+        "Turn on Developer Mode for Data Read in Samsung Health (Settings → About Samsung Health → tap the version 10 times)"
+    e.errorCode == ErrorCode.ERR_NO_USER_PERMISSION -> "SleepCal needs Samsung Health access"
+    e is ResolvablePlatformException -> "Samsung Health needs attention — open SleepCal and tap Grant"
+    else -> "Samsung Health error ${e.errorCode}: ${e.errorMessage ?: e.message}"
+}
+
+private fun stageOf(type: SleepType.StageType): Stage = when (type) {
+    SleepType.StageType.AWAKE -> Stage.AWAKE
+    SleepType.StageType.LIGHT -> Stage.LIGHT
+    SleepType.StageType.DEEP -> Stage.DEEP
+    SleepType.StageType.REM -> Stage.REM
     else -> Stage.UNKNOWN
 }
