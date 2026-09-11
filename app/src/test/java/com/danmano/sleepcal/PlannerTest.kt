@@ -222,6 +222,12 @@ class PlannerTest {
         assertEquals(Action.Lock(key), decide(key, Memory(Status.ACTIVE, spec), moved, newer))
     }
 
+    @Test fun `an event you renamed is locked`() =
+        assertEquals(Action.Lock(key), decide(key, Memory(Status.ACTIVE, spec), liveOf(1, spec).copy(title = "Bad night"), newer))
+
+    @Test fun `an untouched event that is no longer wanted is left alone`() =
+        assertNull(decide(key, Memory(Status.ACTIVE, spec), liveOf(1, spec), null))
+
     @Test fun `an untouched event is updated when the data changes`() =
         assertEquals(Action.Update(key, 1, newer), decide(key, Memory(Status.ACTIVE, spec), liveOf(1, spec), newer))
 
