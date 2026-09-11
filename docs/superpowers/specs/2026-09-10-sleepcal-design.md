@@ -36,14 +36,15 @@ Galaxy Watch ─BT─▶ Samsung Health ─▶ Health Connect
 ```
 
 One Android app, package `com.danmano.sleepcal`, minSdk 34 (Health Connect is part of Android 14+),
-compileSdk/targetSdk 36. Six source files in `app/src/main/java/com/danmano/sleepcal/`:
+compileSdk/targetSdk 36. Seven source files in `app/src/main/java/com/danmano/sleepcal/`:
 
 | File | Responsibility | Depends on |
 |---|---|---|
-| `Planner.kt` | **Pure Kotlin** (java.time only). Data types + all rules: merging, night/nap classification, placeholder + median, event text, edit-ownership decisions. Emits actions. | nothing |
+| `Model.kt` | Shared data types (below) + the description marker format. The contract between files. | nothing |
+| `Planner.kt` | **Pure Kotlin** (java.time only). All rules: merging, night/nap classification, placeholder + median, event text, edit-ownership decisions. Emits actions. | `Model.kt` |
 | `SleepSource.kt` | Reads Health Connect `SleepSessionRecord`s (paged) and maps them to `Session`. The only file that knows Health Connect exists. | Health Connect client |
 | `CalendarStore.kt` | Lists writable Google calendars, reads SleepCal-tagged events in a window, inserts/updates events. | `CalendarContract` |
-| `State.kt` | SharedPreferences + `org.json`: per-key memory, chosen calendar id, last-run status. | Android |
+| `State.kt` | SharedPreferences + `org.json`: per-key memory (one set per calendar), chosen calendar id, last-run status. | Android |
 | `SyncWorker.kt` | `CoroutineWorker`: read → plan → apply → save; error notification. Scheduling helpers. | all of the above |
 | `MainActivity.kt` | One Compose setup screen + Health Connect privacy-rationale entry point. | all of the above |
 
@@ -54,10 +55,10 @@ serialization, instrumented tests) are removed.
 ## Core types (contract between files)
 
 ```kotlin
-// Planner.kt
+// Model.kt
 enum class Stage { AWAKE, LIGHT, DEEP, REM, SLEEPING, UNKNOWN }
 data class StageSpan(val start: Instant, val end: Instant, val stage: Stage)
-data class Session(val id: String, val start: Instant, val end: Instant, val stages: List<StageSpan>)
+data class Session(val start: Instant, val end: Instant, val stages: List<StageSpan>)
 
 data class EventSpec(
     val title: String, val description: String,
@@ -66,7 +67,7 @@ data class EventSpec(
 )
 enum class Status { ACTIVE, LOCKED, TOMBSTONE }
 data class Memory(val status: Status, val written: EventSpec?)   // written == null only for adopted LOCKED
-data class LiveEvent(val id: Long, val key: String, val title: String, val description: String,
+data class LiveEvent(val id: Long, val title: String, val description: String,
                      val start: Instant, val end: Instant)
 
 sealed interface Action {
@@ -77,6 +78,9 @@ sealed interface Action {
     data class Tombstone(override val key: String) : Action
 }
 
+fun markerKey(description: String): String?   // parses "#sleepcal <key>"
+
+// Planner.kt
 fun plan(sessions: List<Session>, memory: Map<String, Memory>,
          live: Map<String, LiveEvent>, now: ZonedDateTime): List<Action>
 ```
@@ -94,18 +98,19 @@ Constants at the top of `Planner.kt`: `MERGE_GAP = 60 min`, `NIGHT_WINDOW = 00:0
    local date of block start and the day after; first match wins). The candidate with the longest
    in-bed time is **the night for D**, key `night:YYYY-MM-DD`. Every other block is a **nap**, key
    `nap:YYYY-MM-DDTHH:MM` (local start).
-4. **Desired events** within the horizon (nights with D ≥ today − 2; naps ending within the last
-   3 days):
+4. **Desired events** within the horizon (nights with D ≥ today − 2; naps starting on or after
+   today − 2):
    - Night: title `😴 Sleep · {asleep}`; nap: `💤 Nap · {asleep}`.
-   - `inBed = end − start`; `awake = Σ AWAKE stage spans + Σ merge gaps`; `asleep = inBed − awake`.
-     With no stage data, `asleep = Σ session durations`.
+   - `inBed = end − start`; `awake = Σ AWAKE stage spans + Σ merge gaps`; `asleep = inBed − awake`
+     (with no stage data this is the summed session time).
    - Description lines: `Asleep 7h 23m · in bed 7h 36m`; stage line with present stages in order
-     Deep · REM · Light · Awake (omitted if no stages); one `Woke h:mm–h:mm AM` line per merge gap;
+     Deep · REM · Light · Awake (omitted if no stages); one `Woke 3:10 AM–3:35 AM` line per merge gap;
      `Source: Samsung Health via Health Connect`; last line marker `#sleepcal {key}`.
    - Durations format as `7h 23m`, or `42m` under an hour. Times use `h:mm a`, Locale.US.
 5. **Placeholder**: for each day D in [today − 2, today] where `now ≥ D 15:00` and D has no night →
    desired `night:D` = placeholder. Times: median of the last `MEDIAN_NIGHTS` real nights (bedtime as
-   minutes after noon of D−1, wake as minutes after midnight of D — handles the midnight wrap). Fewer
+   minutes after noon of D−1, wake as minutes after midnight of D — handles the midnight wrap; wall-clock
+   minutes, so DST change days keep the usual times). Fewer
    than `MIN_NIGHTS_FOR_MEDIAN` nights → fallback 23:30 → 07:30. Title `❔ Sleep (not logged)`,
    description `No watch data for this night — drag this block to your real times.` +
    `Typical times from your last N logged nights.` (or `Default times — not enough history yet.`) +
@@ -120,10 +125,11 @@ Constants at the top of `Planner.kt`: `MERGE_GAP = 60 min`, `NIGHT_WINDOW = 00:0
    | ACTIVE | absent | `Tombstone` (you deleted or moved it) |
    | ACTIVE | differs from `written` (normalized) | `Lock` (you edited it) |
    | ACTIVE | equals `written`, desired differs | `Update` |
-   | ACTIVE | equals `written`, desired same or none | nothing |
+   | ACTIVE | equals `written`, desired same or none, or a placeholder where real data was written | nothing |
 
    *Normalized* compare: title and description with `\r\n → \n` and trimmed; start/end at minute
-   precision. Keys outside the horizon are frozen: no actions.
+   precision. Keys outside the horizon are frozen: no actions. Recorded sleep is never downgraded to a
+   placeholder (e.g. after a time-zone change re-classifies a logged night as a nap).
 
 ## Calendar details
 
@@ -132,10 +138,13 @@ Constants at the top of `Planner.kt`: `MERGE_GAP = 60 min`, `NIGHT_WINDOW = 00:0
   parses the marker (regex `#sleepcal (\S+)`). No event ids are stored.
 - **Calendar choice:** calendars with `ACCOUNT_TYPE = "com.google"` and access level ≥ contributor.
   Auto-select the one named "Sleep" (case-insensitive) if present; otherwise the user picks. On select,
-  set `SYNC_EVENTS = 1` and `VISIBLE = 1` (writable by normal apps).
+  set `SYNC_EVENTS = 1` and `VISIBLE = 1` (writable by normal apps). Memory is kept per calendar, so
+  switching calendars starts fresh there (tagged events already in it are adopted, missing ones created)
+  and switching back resumes where it left off.
 - **Event fields:** `DTSTART/DTEND` (ms), `EVENT_TIMEZONE` = device zone, `AVAILABILITY_FREE`,
   `HAS_ALARM = 0`. Placeholders: best-effort `EVENT_COLOR_KEY` = the Google "graphite" color key from
-  `CalendarContract.Colors` (ignored on failure); updating to real data clears the color.
+  `CalendarContract.Colors` (ignored on failure); replacing a placeholder with real data clears the color.
+  Other updates leave the color alone, so a color you picked stays.
 - The app never deletes events.
 
 ## Failure handling
@@ -149,7 +158,7 @@ Constants at the top of `Planner.kt`: `MERGE_GAP = 60 min`, `NIGHT_WINDOW = 00:0
 | Calendar permission missing, or chosen calendar gone | Run aborts; notification "SleepCal can't find your Sleep calendar" (max once/day). |
 | Any other exception | Recorded as last-run error, notification (max once/day), next period retries. |
 | OS kills background work (RedMagic) | Setup requires battery "Unrestricted" for SleepCal, Samsung Health, Galaxy Wearable, Watch plugin. WorkManager catches up when allowed; app shows last successful run. |
-| App data cleared / reinstall | Existing tagged events are adopted as LOCKED — never overwritten, never duplicated. |
+| App data cleared / reinstall | Existing tagged events are adopted as LOCKED — never overwritten, never duplicated. App backup is off (`allowBackup="false"`), so a reinstall never restores another phone's calendar id. |
 | Duplicate Health Connect writers | Read filtered to data origin `com.sec.android.app.shealth` (constant in `SleepSource.kt`). |
 
 ## One-time setup & credentials
@@ -189,7 +198,8 @@ permission dialog does not open.
 
 1. Samsung Health on a non-Samsung phone writes sleep (with stages) to Health Connect, and the data
    origin package is `com.sec.android.app.shealth`.
-2. `FEATURE_READ_HEALTH_DATA_IN_BACKGROUND` is available on this phone's Health Connect module.
+2. `FEATURE_READ_HEALTH_DATA_IN_BACKGROUND` is available on this phone's Health Connect module (shown by
+   the background-read grant succeeding; without it every run aborts, as in the failure table).
 3. Placeholder `EVENT_COLOR_KEY` syncs to Google and shows in Notion Calendar (else title alone marks it).
 4. Whether naps are written to Health Connect at all.
 
