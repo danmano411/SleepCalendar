@@ -20,15 +20,16 @@ class State(context: Context) {
         get() = prefs.getString("lastNotified", null) ?: ""
         set(v) = prefs.edit().putString("lastNotified", v).apply()
 
-    fun memory(): Map<String, Memory> {
-        val root = JSONObject(prefs.getString("memory", null) ?: "{}")
+    /** Kept per calendar: switching calendars starts fresh there, switching back resumes. */
+    fun memory(calendarId: Long): Map<String, Memory> {
+        val root = JSONObject(prefs.getString("memory-$calendarId", null) ?: "{}")
         return root.keys().asSequence().associateWith { decode(root.getJSONObject(it)) }
     }
 
-    fun saveMemory(memory: Map<String, Memory>) {
+    fun saveMemory(calendarId: Long, memory: Map<String, Memory>) {
         val root = JSONObject()
         memory.forEach { (key, m) -> root.put(key, encode(m)) }
-        prefs.edit().putString("memory", root.toString()).commit()
+        prefs.edit().putString("memory-$calendarId", root.toString()).commit()
     }
 }
 

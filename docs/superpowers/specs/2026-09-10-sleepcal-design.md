@@ -44,7 +44,7 @@ compileSdk/targetSdk 36. Seven source files in `app/src/main/java/com/danmano/sl
 | `Planner.kt` | **Pure Kotlin** (java.time only). All rules: merging, night/nap classification, placeholder + median, event text, edit-ownership decisions. Emits actions. | `Model.kt` |
 | `SleepSource.kt` | Reads Health Connect `SleepSessionRecord`s (paged) and maps them to `Session`. The only file that knows Health Connect exists. | Health Connect client |
 | `CalendarStore.kt` | Lists writable Google calendars, reads SleepCal-tagged events in a window, inserts/updates events. | `CalendarContract` |
-| `State.kt` | SharedPreferences + `org.json`: per-key memory, chosen calendar id, last-run status. | Android |
+| `State.kt` | SharedPreferences + `org.json`: per-key memory (one set per calendar), chosen calendar id, last-run status. | Android |
 | `SyncWorker.kt` | `CoroutineWorker`: read → plan → apply → save; error notification. Scheduling helpers. | all of the above |
 | `MainActivity.kt` | One Compose setup screen + Health Connect privacy-rationale entry point. | all of the above |
 
@@ -138,7 +138,9 @@ Constants at the top of `Planner.kt`: `MERGE_GAP = 60 min`, `NIGHT_WINDOW = 00:0
   parses the marker (regex `#sleepcal (\S+)`). No event ids are stored.
 - **Calendar choice:** calendars with `ACCOUNT_TYPE = "com.google"` and access level ≥ contributor.
   Auto-select the one named "Sleep" (case-insensitive) if present; otherwise the user picks. On select,
-  set `SYNC_EVENTS = 1` and `VISIBLE = 1` (writable by normal apps).
+  set `SYNC_EVENTS = 1` and `VISIBLE = 1` (writable by normal apps). Memory is kept per calendar, so
+  switching calendars starts fresh there (tagged events already in it are adopted, missing ones created)
+  and switching back resumes where it left off.
 - **Event fields:** `DTSTART/DTEND` (ms), `EVENT_TIMEZONE` = device zone, `AVAILABILITY_FREE`,
   `HAS_ALARM = 0`. Placeholders: best-effort `EVENT_COLOR_KEY` = the Google "graphite" color key from
   `CalendarContract.Colors` (ignored on failure); replacing a placeholder with real data clears the color.
@@ -156,7 +158,7 @@ Constants at the top of `Planner.kt`: `MERGE_GAP = 60 min`, `NIGHT_WINDOW = 00:0
 | Calendar permission missing, or chosen calendar gone | Run aborts; notification "SleepCal can't find your Sleep calendar" (max once/day). |
 | Any other exception | Recorded as last-run error, notification (max once/day), next period retries. |
 | OS kills background work (RedMagic) | Setup requires battery "Unrestricted" for SleepCal, Samsung Health, Galaxy Wearable, Watch plugin. WorkManager catches up when allowed; app shows last successful run. |
-| App data cleared / reinstall | Existing tagged events are adopted as LOCKED — never overwritten, never duplicated. |
+| App data cleared / reinstall | Existing tagged events are adopted as LOCKED — never overwritten, never duplicated. App backup is off (`allowBackup="false"`), so a reinstall never restores another phone's calendar id. |
 | Duplicate Health Connect writers | Read filtered to data origin `com.sec.android.app.shealth` (constant in `SleepSource.kt`). |
 
 ## One-time setup & credentials

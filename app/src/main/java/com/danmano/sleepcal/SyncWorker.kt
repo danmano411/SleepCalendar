@@ -69,7 +69,7 @@ private suspend fun syncOnce(context: Context, state: State): String {
 
     val sessions = source.read(now.minusDays(14).toInstant(), now.toInstant())
     val live = store.tagged(calendarId, now.minusDays(4).toInstant(), now.plusDays(1).toInstant())
-    val memory = state.memory().toMutableMap()
+    val memory = state.memory(calendarId).toMutableMap()
     val actions = plan(sessions, memory, live, now)
     try {
         for (a in actions) when (a) {
@@ -87,7 +87,7 @@ private suspend fun syncOnce(context: Context, state: State): String {
     } finally {
         // Save whatever succeeded, and forget keys a month old.
         val oldest = now.toLocalDate().minusDays(30)
-        state.saveMemory(memory.filterKeys { k -> keyDate(k)?.let { it >= oldest } ?: false })
+        state.saveMemory(calendarId, memory.filterKeys { k -> keyDate(k)?.let { it >= oldest } ?: false })
     }
     return "${actions.count { it is Action.Create }} created, ${actions.count { it is Action.Update }} updated"
 }
